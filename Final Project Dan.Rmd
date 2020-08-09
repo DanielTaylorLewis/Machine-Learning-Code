@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #Download and save data
 
-```{r,echo=FALSE}
+```{r,warning=FALSE,message=FALSE}
 download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile = "pml_training.csv")
 download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="pml_testing.csv")
 
@@ -93,7 +93,16 @@ train<-training[intrain,]
 test<-training[-intrain,]
 ```
 
+# Define cross validation procedure
+Use 5 fold cross validation this is a compromise between using enough folds that I feel confident that over fitting to the train data will be reduce and the time the model fit takes to run on my computer.
+```{r}
+#Use 5 fold cross validation in all models
+fitControl <- trainControl(method = "cv",number = 5)
+```
+
+
 # GBM model
+Fit GBM model I have shown the example tune grid that was used but to save time in the final model build just the best parameters are fit 
 ```{r,warning=FALSE,message=FALSE,cache=TRUE}
 set.seed(825)
 #For time I have run the final code on a smaller tuning grid with just the optimal point chosen but the initial trial grid has been left in for reference
@@ -109,7 +118,8 @@ gbmGrid <-  expand.grid(interaction.depth = c(5),
 
 #Fit time for my computer is very long so just fit on a random subsample
 
-gbm_fit1 <- train(classe ~ ., data = train, 
+gbm_fit1 <- train(classe ~ ., data = train,
+                trControl = fitControl,
                  method = "gbm",
                  tuneGrid=gbmGrid,
                  verbose = FALSE)
@@ -125,6 +135,7 @@ sum(gbm_pred1==test$classe)/length(test$classe)
 ```{r,warning=FALSE,message=FALSE,cache=TRUE}
 set.seed(826)
 lda_fit1 <- train(classe ~ ., data = train, 
+                 trControl = fitControl,
                  method = "lda",
                  verbose = FALSE)
 lda_pred1<-predict(lda_fit1, newdata = test)
@@ -135,15 +146,21 @@ sum(lda_pred1==test$classe)/length(test$classe)
 ```
 # K near neighbours model
 
+Fit KNN model, the data has been normalised because these generally improves the accuracy of KNN models because it means the relative size of a predictor does not skew the data. Example tune grid shown but final tune grid is just the best result.
+
 ```{r,warning=FALSE,message=FALSE,cache=TRUE}
 set.seed(827)
+#tuneknn<- expand.grid(k=c(5,10,20,50))
 tuneknn<- expand.grid(k=c(5))
+
+
 normalise <- function(x) {
 return ((x - min(x)) / (max(x) - min(x)))
 }
 norm_train<-sapply(train[,-54],function(x) normalise(x))
 norm_train<-data.frame(norm_train,classe=train[,54])
-knn_fit1 <- train(classe ~ ., data = norm_train, 
+knn_fit1 <- train(classe ~ ., data = norm_train,
+                 trControl = fitControl,
                  method = "knn",
                  tuneGrid=tuneknn)
 
@@ -169,6 +186,7 @@ gbmGrid_ensemble <-  expand.grid(interaction.depth = c(3),
 
 gbm_fit_ensemble <- train(classe ~ ., data = train_ensemble, 
                  method = "gbm",
+                 trControl = fitControl,
                  tuneGrid=gbmGrid_ensemble,
                  ## This last option is actually one
                  ## for gbm() that passes through
@@ -193,7 +211,9 @@ predictions<-data.frame(gbm_pred_final,lda_pred_final,knn_pred_final,gbm_ensembl
 predictions
 ```
 
+The ensemble model accuracy was `r round(gbm_fit_ensemble$results[["Accuracy"]],4)` on the inner test data, so I would expect this accuracy to be similar for the final testing data so we should 19 or 20 correct. Interesting the GBM accuracy was similar to this on its own, which explains why the final predictions are so similar. 
 
+Out of sample error should be around the error seen on the inner test where the accuracy was `r round(gbm_fit_ensemble$results[["Accuracy"]],4)`.
 
 
 

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 
 <html>
 
@@ -370,6 +370,8 @@ summary {
 
 
 <p>#Download and save data</p>
+<pre class="r"><code>download.file(url=&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv&quot;,destfile = &quot;pml_training.csv&quot;)
+download.file(url=&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv&quot;,destfile=&quot;pml_testing.csv&quot;)</code></pre>
 <div id="load-required-libraries" class="section level1">
 <h1>load required libraries</h1>
 <pre class="r"><code>library(dplyr)
@@ -407,8 +409,15 @@ testing&lt;-read.csv(&quot;pml_testing.csv&quot;,header = T,na.strings = c(&quot
 train&lt;-training[intrain,]
 test&lt;-training[-intrain,]</code></pre>
 </div>
+<div id="define-cross-validation-procedure" class="section level1">
+<h1>Define cross validation procedure</h1>
+<p>Use 5 fold cross validation this is a compromise between using enough folds that I feel confident that over fitting to the train data will be reduce and the time the model fit takes to run on my computer.</p>
+<pre class="r"><code>#Use 5 fold cross validation in all models
+fitControl &lt;- trainControl(method = &quot;cv&quot;,number = 5)</code></pre>
+</div>
 <div id="gbm-model" class="section level1">
 <h1>GBM model</h1>
+<p>Fit GBM model I have shown the example tune grid that was used but to save time in the final model build just the best parameters are fit</p>
 <pre class="r"><code>set.seed(825)
 #For time I have run the final code on a smaller tuning grid with just the optimal point chosen but the initial trial grid has been left in for reference
 gbmGrid &lt;-  expand.grid(interaction.depth = c(5), 
@@ -423,7 +432,8 @@ gbmGrid &lt;-  expand.grid(interaction.depth = c(5),
 
 #Fit time for my computer is very long so just fit on a random subsample
 
-gbm_fit1 &lt;- train(classe ~ ., data = train, 
+gbm_fit1 &lt;- train(classe ~ ., data = train,
+                trControl = fitControl,
                  method = &quot;gbm&quot;,
                  tuneGrid=gbmGrid,
                  verbose = FALSE)
@@ -434,17 +444,18 @@ table(gbm_pred1,test$classe)</code></pre>
 <pre><code>##          
 ## gbm_pred1    A    B    C    D    E
 ##         A 1674    0    0    0    0
-##         B    0 1139    0    0    3
-##         C    0    0 1026    0    0
-##         D    0    0    0  962    2
-##         E    0    0    0    2 1077</code></pre>
+##         B    0 1139    2    0    0
+##         C    0    0 1024    0    0
+##         D    0    0    0  964    2
+##         E    0    0    0    0 1080</code></pre>
 <pre class="r"><code>sum(gbm_pred1==test$classe)/length(test$classe)</code></pre>
-<pre><code>## [1] 0.9988105</code></pre>
+<pre><code>## [1] 0.9993203</code></pre>
 </div>
 <div id="linear-discriminant-analysis-model" class="section level1">
 <h1>Linear discriminant analysis model</h1>
 <pre class="r"><code>set.seed(826)
 lda_fit1 &lt;- train(classe ~ ., data = train, 
+                 trControl = fitControl,
                  method = &quot;lda&quot;,
                  verbose = FALSE)
 lda_pred1&lt;-predict(lda_fit1, newdata = test)
@@ -452,24 +463,29 @@ lda_pred1&lt;-predict(lda_fit1, newdata = test)
 table(lda_pred1,test$classe)</code></pre>
 <pre><code>##          
 ## lda_pred1    A    B    C    D    E
-##         A 1437  155   85   56   39
-##         B   48  768  105   41  130
-##         C   82  138  702  123   69
-##         D  107   36  119  729   94
-##         E    0   42   15   15  750</code></pre>
+##         A 1416  143   75   53   48
+##         B   45  769   91   37  114
+##         C   98  147  719  120   71
+##         D  114   40  125  743  100
+##         E    1   40   16   11  749</code></pre>
 <pre class="r"><code>sum(lda_pred1==test$classe)/length(test$classe)</code></pre>
-<pre><code>## [1] 0.7452846</code></pre>
+<pre><code>## [1] 0.7469839</code></pre>
 </div>
 <div id="k-near-neighbours-model" class="section level1">
 <h1>K near neighbours model</h1>
+<p>Fit KNN model, the data has been normalised because these generally improves the accuracy of KNN models because it means the relative size of a predictor does not skew the data. Example tune grid shown but final tune grid is just the best result.</p>
 <pre class="r"><code>set.seed(827)
+#tuneknn&lt;- expand.grid(k=c(5,10,20,50))
 tuneknn&lt;- expand.grid(k=c(5))
+
+
 normalise &lt;- function(x) {
 return ((x - min(x)) / (max(x) - min(x)))
 }
 norm_train&lt;-sapply(train[,-54],function(x) normalise(x))
 norm_train&lt;-data.frame(norm_train,classe=train[,54])
-knn_fit1 &lt;- train(classe ~ ., data = norm_train, 
+knn_fit1 &lt;- train(classe ~ ., data = norm_train,
+                 trControl = fitControl,
                  method = &quot;knn&quot;,
                  tuneGrid=tuneknn)
 
@@ -480,13 +496,13 @@ knn_pred1&lt;-predict(knn_fit1, newdata = norm_test)
 table(knn_pred1,test$classe)</code></pre>
 <pre><code>##          
 ## knn_pred1    A    B    C    D    E
-##         A 1650   44    5    3    2
-##         B   11 1047   25    3   12
-##         C    3   35  967   74   11
-##         D    9    4   24  876   31
-##         E    1    9    5    8 1026</code></pre>
+##         A 1623   38    8    7    2
+##         B   27 1055   23    8   12
+##         C    9   27  937   48    5
+##         D   14    9   44  878   22
+##         E    1   10   14   23 1041</code></pre>
 <pre class="r"><code>sum(knn_pred1==test$classe)/length(test$classe)</code></pre>
-<pre><code>## [1] 0.9457944</code></pre>
+<pre><code>## [1] 0.9403568</code></pre>
 </div>
 <div id="ensemble-models" class="section level1">
 <h1>Ensemble models</h1>
@@ -501,13 +517,14 @@ gbmGrid_ensemble &lt;-  expand.grid(interaction.depth = c(3),
 
 gbm_fit_ensemble &lt;- train(classe ~ ., data = train_ensemble, 
                  method = &quot;gbm&quot;,
+                 trControl = fitControl,
                  tuneGrid=gbmGrid_ensemble,
                  ## This last option is actually one
                  ## for gbm() that passes through
                  verbose = FALSE)
 
 gbm_fit_ensemble$results[[&quot;Accuracy&quot;]]</code></pre>
-<pre><code>## [1] 0.9987941</code></pre>
+<pre><code>## [1] 0.9991502</code></pre>
 </div>
 <div id="predict-on-final-testing-data" class="section level1">
 <h1>Predict on final testing data</h1>
@@ -522,12 +539,12 @@ gbm_ensemble_pred_final&lt;-predict(gbm_fit_ensemble,newdata=testing_ensemble)
 predictions&lt;-data.frame(gbm_pred_final,lda_pred_final,knn_pred_final,gbm_ensemble_pred_final)
 predictions</code></pre>
 <pre><code>##    gbm_pred_final lda_pred_final knn_pred_final gbm_ensemble_pred_final
-## 1               B              B              B                       B
+## 1               B              B              C                       B
 ## 2               A              A              B                       A
 ## 3               B              B              B                       B
 ## 4               A              A              C                       A
 ## 5               A              A              A                       A
-## 6               E              C              E                       E
+## 6               E              C              B                       E
 ## 7               D              D              D                       D
 ## 8               B              D              B                       B
 ## 9               A              A              B                       A
@@ -542,6 +559,8 @@ predictions</code></pre>
 ## 18              B              B              B                       B
 ## 19              B              B              B                       B
 ## 20              B              B              B                       B</code></pre>
+<p>The ensemble model accuracy was 0.9992 on the inner test data, so I would expect this accuracy to be similar for the final testing data so we should 19 or 20 correct. Interesting the GBM accuracy was similar to this on its own, which explains why the final predictions are so similar.</p>
+<p>Out of sample error should be around the error seen on the inner test where the accuracy was 0.9992.</p>
 </div>
 
 
