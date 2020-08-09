@@ -1,0 +1,199 @@
+---
+title: "Machine Learning Project"
+author: "Dan Taylor Lewis"
+date: "26/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Download and save data
+
+```{r,echo=FALSE}
+download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile = "pml_training.csv")
+download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="pml_testing.csv")
+
+```
+
+# load required libraries
+
+```{r,warning=FALSE,message=FALSE}
+library(dplyr)
+library(caret)
+```
+
+
+
+# Read in and inspect data
+## Read data
+During the data inspection I discovered the NA strings "NA" "#DIV/0!" added this to the read.csv function so variable with this string can be read in without error.
+
+```{r,warning=FALSE,message=FALSE}
+
+training<-read.csv("pml_training.csv",header =T,na.strings = c("","#DIV/0!","NA"))
+testing<-read.csv("pml_testing.csv",header = T,na.strings = c("","#DIV/0!","NA"))
+
+```
+## Check the distribution of users is similar for train and test
+
+Interesting to see that there is a higher proportion of in the test than the train, we could up wait this group when we come to modeling because for this project the marking is coming from a good prediction on the test, however I have decided not to do this because this would not normally be the correct way to use the test dataset.  
+
+```{r}
+table(training$user_name)/dim(training)[1]*100
+table(testing$user_name)/dim(testing)[1]*100
+```
+## Inspect and clean data
+
+I have not echoed the below code chunk because I have added fixes for errors flagged in the read data step and the output is also quite lengthy and is not important to this project. 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+
+#Initials checks
+#summary(training)
+#unique(training$max_roll_belt)
+
+#Flag fields which are almost entirely missing
+missing_gt95_vec<-sapply(training,function(x) sum(is.na(x))/dim(training)[1]>0.95)
+missing_gt95_names<-names(training)[missing_gt95_vec]
+
+#one hot encode character variable username
+# training data
+dummy <- dummyVars(" ~ user_name", data = training)
+encoded_username_training <- data.frame(predict(dummy, newdata = training))
+training<-cbind(training,encoded_username_training)
+
+# testing data
+dummy <- dummyVars(" ~ user_name", data = testing)
+encoded_username_testing <- data.frame(predict(dummy, newdata = testing))
+testing<-cbind(testing,encoded_username_testing)
+
+#Remove unwanted fields - fields with high missing, id variable and time stamps
+#Remove user_name because now have 1 hot encoded fields
+#Remove new_window because it is always "no" on test data
+training<-training%>%
+  select(-c(missing_gt95_names,"X","cvtd_timestamp","raw_timestamp_part_1","raw_timestamp_part_2","new_window","user_name" ))
+testing<-testing%>%
+  select(-c(missing_gt95_names,"X","cvtd_timestamp","raw_timestamp_part_1","raw_timestamp_part_2","new_window","user_name"))
+
+
+
+
+```
+
+
+# Create a train and test set from the training data
+
+I have created a train and test data set as subsets of the training data this allows me to test the model performance on some out of sample data before I need to try it on the t
+
+```{r}
+intrain<-createDataPartition(y=training$classe,p=0.7,list=F)
+train<-training[intrain,]
+test<-training[-intrain,]
+```
+
+# GBM model
+```{r,warning=FALSE,message=FALSE,cache=TRUE}
+set.seed(825)
+#For time I have run the final code on a smaller tuning grid with just the optimal point chosen but the initial trial grid has been left in for reference
+gbmGrid <-  expand.grid(interaction.depth = c(5), 
+                        n.trees = c(250), 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+
+#gbmGrid <-  expand.grid(interaction.depth = c(1,2,3, 4, 5), 
+                        #n.trees = c(50,100,150,200,250), 
+                        #shrinkage = 0.1,
+                        #n.minobsinnode = 20)
+
+#Fit time for my computer is very long so just fit on a random subsample
+
+gbm_fit1 <- train(classe ~ ., data = train, 
+                 method = "gbm",
+                 tuneGrid=gbmGrid,
+                 verbose = FALSE)
+
+gbm_pred1<-predict(gbm_fit1, newdata = test)
+
+table(gbm_pred1,test$classe)
+sum(gbm_pred1==test$classe)/length(test$classe)
+```
+
+# Linear discriminant analysis model 
+
+```{r,warning=FALSE,message=FALSE,cache=TRUE}
+set.seed(826)
+lda_fit1 <- train(classe ~ ., data = train, 
+                 method = "lda",
+                 verbose = FALSE)
+lda_pred1<-predict(lda_fit1, newdata = test)
+
+table(lda_pred1,test$classe)
+sum(lda_pred1==test$classe)/length(test$classe)
+
+```
+# K near neighbours model
+
+```{r,warning=FALSE,message=FALSE,cache=TRUE}
+set.seed(827)
+tuneknn<- expand.grid(k=c(5))
+normalise <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+norm_train<-sapply(train[,-54],function(x) normalise(x))
+norm_train<-data.frame(norm_train,classe=train[,54])
+knn_fit1 <- train(classe ~ ., data = norm_train, 
+                 method = "knn",
+                 tuneGrid=tuneknn)
+
+norm_test<-sapply(test[,-54],function(x) normalise(x))
+norm_test<-data.frame(norm_test,classe=test[,54])
+knn_pred1<-predict(knn_fit1, newdata = norm_test)
+
+table(knn_pred1,test$classe)
+sum(knn_pred1==test$classe)/length(test$classe)
+
+```
+
+# Ensemble models
+```{r}
+set.seed(828)
+train_ensemble<-data.frame(classe=test$classe,gbm_pred=gbm_pred1,lda_pred=lda_pred1,knn_pred=knn_pred1)
+
+gbmGrid_ensemble <-  expand.grid(interaction.depth = c(3), 
+                        n.trees = c(100), 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+
+
+gbm_fit_ensemble <- train(classe ~ ., data = train_ensemble, 
+                 method = "gbm",
+                 tuneGrid=gbmGrid_ensemble,
+                 ## This last option is actually one
+                 ## for gbm() that passes through
+                 verbose = FALSE)
+
+gbm_fit_ensemble$results[["Accuracy"]]
+```
+
+# Predict on final testing data
+
+```{r}
+
+gbm_pred_final<-predict(gbm_fit1, newdata = testing)
+lda_pred_final<-predict(lda_fit1, newdata = testing)
+knn_pred_final<-predict(knn_fit1, newdata = testing)
+
+testing_ensemble<-data.frame(gbm_pred=gbm_pred_final,lda_pred=lda_pred_final,knn_pred=knn_pred_final)
+
+gbm_ensemble_pred_final<-predict(gbm_fit_ensemble,newdata=testing_ensemble)
+
+predictions<-data.frame(gbm_pred_final,lda_pred_final,knn_pred_final,gbm_ensemble_pred_final)
+predictions
+```
+
+
+
+
+
